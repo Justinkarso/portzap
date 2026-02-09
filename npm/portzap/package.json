@@ -1,0 +1,30 @@
+{
+  "name": "portzap",
+  "version": "0.1.0",
+  "description": "A fast, cross-platform port management tool. Kill, list, and watch processes on network ports.",
+  "license": "MIT",
+  "bin": {
+    "portzap": "bin.js"
+  },
+  "files": [
+    "bin.js"
+  ],
+  "optionalDependencies": {
+    "@portzap/darwin-arm64": "0.1.0",
+    "@portzap/darwin-x64": "0.1.0",
+    "@portzap/linux-x64": "0.1.0",
+    "@portzap/linux-arm64": "0.1.0"
+  },
+  "keywords": [
+    "port",
+    "kill",
+    "process",
+    "network",
+    "cli",
+    "devtools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/justinkarso/portzap"
+  }
+}

@@ -1,0 +1,9 @@
+/target
+Cargo.lock
+
+# npm platform binaries (built by CI)
+npm/portzap-darwin-arm64/portzap
+npm/portzap-darwin-x64/portzap
+npm/portzap-linux-x64/portzap
+npm/portzap-linux-arm64/portzap
+node_modules/
