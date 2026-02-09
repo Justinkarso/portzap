@@ -5,6 +5,8 @@ edition = "2021"
 rust-version = "1.74"
 description = "A fast, cross-platform port management tool. Kill, list, and watch processes on network ports."
 license = "MIT OR Apache-2.0"
+homepage = "https://github.com/justinkarso/portzap"
+repository = "https://github.com/justinkarso/portzap"
 keywords = ["port", "kill", "process", "network", "cli"]
 categories = ["command-line-utilities", "os"]
 
