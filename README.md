@@ -76,6 +76,30 @@ portzap watch 3000
 portzap watch 3000 8080
 ```
 
+### Interactive GUI Mode
+
+Launch an interactive terminal UI to browse and manage processes:
+
+```bash
+# Open the GUI dashboard
+portzap gui
+```
+
+The GUI provides:
+- **Browse all listening ports** - View all processes using network ports with details (PID, command, protocol)
+- **Search & filter** - Press `/` to filter processes by name
+- **Sort** - Press `s` to cycle through sort options (port, PID, name, protocol)
+- **Select & kill** - Use arrow keys to navigate, `Space`/`Enter` to toggle selection and kill processes
+- **Keyboard shortcuts**:
+  - `↑/↓` - Navigate
+  - `Space/Enter` - Toggle selection and kill
+  - `Tab` - Multi-select
+  - `/` - Filter by name
+  - `s` - Sort
+  - `r` - Refresh
+  - `?` - Show help
+  - `q/Esc` - Quit
+
 ## Options
 
 - `-i, --interactive`: Interactive mode to select processes
