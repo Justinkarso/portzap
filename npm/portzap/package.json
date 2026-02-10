@@ -7,8 +7,10 @@
     "portzap": "bin.js"
   },
   "files": [
-    "bin.js"
+    "bin.js",
+    "../README.md"
   ],
+  "readme": "../README.md",
   "optionalDependencies": {
     "@portzap/darwin-arm64": "0.1.3",
     "@portzap/darwin-x64": "0.1.3",
