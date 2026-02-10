@@ -1,6 +1,8 @@
+use crate::config::Config;
 use crate::killer::{self, KillConfig};
 use crate::process::{ProcessInfo, Protocol};
 use crate::scanner::create_scanner;
+use crate::theme::Theme;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -9,7 +11,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table, TableState,
@@ -34,6 +36,11 @@ struct App {
     sort_ascending: bool,
     filter_text: String,
     filter_mode: bool,
+    config: Config,
+    theme: Theme,
+    show_confirm_dialog: bool,
+    confirm_target_count: usize,
+    zapping: Vec<(usize, Instant)>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -53,6 +60,12 @@ enum SortColumn {
 
 impl App {
     fn new() -> Self {
+        let config = Config::load();
+        let theme = match config.theme {
+            crate::theme::ThemeVariant::Dark => Theme::dark(),
+            crate::theme::ThemeVariant::Light => Theme::light(),
+        };
+
         let mut app = Self {
             processes: Vec::new(),
             table_state: TableState::default(),
@@ -65,6 +78,11 @@ impl App {
             sort_ascending: true,
             filter_text: String::new(),
             filter_mode: false,
+            config,
+            theme,
+            show_confirm_dialog: false,
+            confirm_target_count: 0,
+            zapping: Vec::new(),
         };
         app.refresh_processes();
         if !app.processes.is_empty() {
@@ -220,6 +238,8 @@ impl App {
                 let result = killer::kill_process(&self.processes[idx], &config);
                 if result.success {
                     killed += 1;
+                    // Add to zapping animation
+                    self.zapping.push((idx, Instant::now()));
                 } else {
                     failed += 1;
                 }
@@ -242,9 +262,6 @@ impl App {
             StatusKind::Error
         };
         self.set_status(&msg, kind);
-
-        // Refresh immediately
-        self.refresh_processes();
     }
 
     fn cycle_sort(&mut self) {
@@ -267,8 +284,66 @@ impl App {
         self.status_message = Some((msg.to_string(), Instant::now(), kind));
     }
 
+    fn toggle_theme(&mut self) {
+        self.config.theme = self.config.theme.toggle();
+        self.theme = match self.config.theme {
+            crate::theme::ThemeVariant::Dark => Theme::dark(),
+            crate::theme::ThemeVariant::Light => Theme::light(),
+        };
+        if let Err(_) = self.config.save() {
+            self.set_status("Failed to save theme preference", StatusKind::Error);
+        } else {
+            let theme_name = match self.config.theme {
+                crate::theme::ThemeVariant::Dark => "Dark",
+                crate::theme::ThemeVariant::Light => "Light",
+            };
+            self.set_status(&format!("Switched to {} theme", theme_name), StatusKind::Info);
+        }
+    }
+
+    fn request_kill_confirmation(&mut self) {
+        let filtered = self.filtered_indices();
+        let targets: Vec<usize> = if self.selected.is_empty() {
+            self.table_state
+                .selected()
+                .and_then(|row| filtered.get(row).copied())
+                .into_iter()
+                .collect()
+        } else {
+            self.selected.iter().copied().collect()
+        };
+
+        if targets.is_empty() {
+            self.set_status("Nothing selected", StatusKind::Info);
+            return;
+        }
+
+        if self.config.skip_confirm_dialog {
+            self.kill_selected();
+        } else {
+            self.show_confirm_dialog = true;
+            self.confirm_target_count = targets.len();
+        }
+    }
+
     fn handle_key(&mut self, key: KeyEvent) {
         if key.kind != KeyEventKind::Press {
+            return;
+        }
+
+        // Confirmation dialog captures input
+        if self.show_confirm_dialog {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.show_confirm_dialog = false;
+                    self.kill_selected();
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.show_confirm_dialog = false;
+                    self.set_status("Kill cancelled", StatusKind::Info);
+                }
+                _ => {}
+            }
             return;
         }
 
@@ -325,7 +400,7 @@ impl App {
             }
             KeyCode::Char(' ') => self.toggle_selection(),
             KeyCode::Char('a') => self.select_all(),
-            KeyCode::Enter | KeyCode::Char('x') => self.kill_selected(),
+            KeyCode::Enter | KeyCode::Char('x') => self.request_kill_confirmation(),
             KeyCode::Char('r') => {
                 self.refresh_processes();
                 self.set_status("Refreshed", StatusKind::Info);
@@ -335,6 +410,7 @@ impl App {
                 self.filter_mode = true;
                 self.filter_text.clear();
             }
+            KeyCode::Char('t') => self.toggle_theme(),
             KeyCode::Char('?') => self.show_help = true,
             _ => {}
         }
@@ -361,8 +437,19 @@ pub fn run() -> anyhow::Result<()> {
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyhow::Result<()> {
     let mut app = App::new();
+    let animation_duration = Duration::from_millis(app.config.animation_duration_ms);
 
     loop {
+        // Clean up completed animations
+        let now = Instant::now();
+        let had_zapping = !app.zapping.is_empty();
+        app.zapping.retain(|(_, start_time)| now.duration_since(*start_time) < animation_duration);
+
+        // Refresh processes after animations complete
+        if had_zapping && app.zapping.is_empty() {
+            app.refresh_processes();
+        }
+
         // Auto-refresh
         if app.last_refresh.elapsed() >= REFRESH_RATE && !app.filter_mode {
             app.refresh_processes();
@@ -395,7 +482,7 @@ fn draw(frame: &mut ratatui::Frame, app: &mut App) {
 
     // Background
     frame.render_widget(
-        Block::default().style(Style::default().bg(Color::Rgb(15, 15, 25))),
+        Block::default().style(Style::default().bg(app.theme.background)),
         area,
     );
 
@@ -414,8 +501,12 @@ fn draw(frame: &mut ratatui::Frame, app: &mut App) {
     draw_status_bar(frame, chunks[3], app);
     draw_key_hints(frame, chunks[4], app);
 
+    if app.show_confirm_dialog {
+        draw_confirm_dialog(frame, area, app);
+    }
+
     if app.show_help {
-        draw_help_overlay(frame, area);
+        draw_help_overlay(frame, area, app);
     }
 }
 
@@ -428,17 +519,17 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Span::styled(
             " PortZap ",
             Style::default()
-                .fg(Color::Rgb(255, 100, 50))
+                .fg(app.theme.header_title)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!(" {} processes", process_count),
-            Style::default().fg(Color::Rgb(140, 140, 170)),
+            Style::default().fg(app.theme.text_secondary),
         ),
         if total != process_count {
             Span::styled(
                 format!(" (of {})", total),
-                Style::default().fg(Color::Rgb(100, 100, 120)),
+                Style::default().fg(app.theme.text_tertiary),
             )
         } else {
             Span::raw("")
@@ -447,7 +538,7 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             Span::styled(
                 format!(" | {} selected", selected_count),
                 Style::default()
-                    .fg(Color::Rgb(255, 200, 50))
+                    .fg(app.theme.accent_secondary)
                     .add_modifier(Modifier::BOLD),
             )
         } else {
@@ -459,8 +550,8 @@ fn draw_header(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
-            .style(Style::default().bg(Color::Rgb(20, 20, 35))),
+            .border_style(Style::default().fg(app.theme.border))
+            .style(Style::default().bg(app.theme.background_secondary)),
     );
     frame.render_widget(header, area);
 }
@@ -471,39 +562,39 @@ fn draw_filter_bar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             Span::styled(
                 " Filter: ",
                 Style::default()
-                    .fg(Color::Rgb(255, 200, 50))
+                    .fg(app.theme.accent_secondary)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 &app.filter_text,
-                Style::default().fg(Color::White),
+                Style::default().fg(app.theme.text_default),
             ),
-            Span::styled("_", Style::default().fg(Color::White).add_modifier(Modifier::SLOW_BLINK)),
+            Span::styled("_", Style::default().fg(app.theme.text_default).add_modifier(Modifier::SLOW_BLINK)),
         ]))
-        .style(Style::default().bg(Color::Rgb(40, 40, 60)));
+        .style(Style::default().bg(app.theme.background_tertiary));
         frame.render_widget(bar, area);
     } else if !app.filter_text.is_empty() {
         let bar = Paragraph::new(Line::from(vec![
             Span::styled(
                 " Filtered: ",
-                Style::default().fg(Color::Rgb(140, 140, 170)),
+                Style::default().fg(app.theme.text_secondary),
             ),
             Span::styled(
                 &app.filter_text,
                 Style::default()
-                    .fg(Color::Rgb(255, 200, 50))
+                    .fg(app.theme.accent_secondary)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 "  (/ to edit, Esc to clear)",
-                Style::default().fg(Color::Rgb(80, 80, 100)),
+                Style::default().fg(app.theme.accent_tertiary),
             ),
         ]))
-        .style(Style::default().bg(Color::Rgb(25, 25, 40)));
+        .style(Style::default().bg(app.theme.background_tertiary));
         frame.render_widget(bar, area);
     } else {
         frame.render_widget(
-            Paragraph::new("").style(Style::default().bg(Color::Rgb(15, 15, 25))),
+            Paragraph::new("").style(Style::default().bg(app.theme.background)),
             area,
         );
     }
@@ -534,28 +625,40 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
     let header = Row::new(header_cells)
         .style(
             Style::default()
-                .fg(Color::Rgb(180, 180, 220))
+                .fg(app.theme.text_default)
                 .add_modifier(Modifier::BOLD),
         )
         .height(1);
+
+    // Build zapping index map for animation
+    let mut zapping_indices = std::collections::HashSet::new();
+    let animation_duration = Duration::from_millis(app.config.animation_duration_ms);
+    let now = Instant::now();
+    for (idx, start_time) in &app.zapping {
+        let elapsed = now.duration_since(*start_time);
+        if elapsed < animation_duration {
+            zapping_indices.insert(*idx);
+        }
+    }
 
     let rows: Vec<Row> = filtered
         .iter()
         .map(|&orig_idx| {
             let p = &app.processes[orig_idx];
             let is_selected = app.selected.contains(&orig_idx);
+            let is_zapping = zapping_indices.contains(&orig_idx);
 
             let marker = if is_selected { "● " } else { "  " };
 
             let proto_color = match p.protocol {
-                Protocol::Tcp => Color::Rgb(100, 200, 255),
-                Protocol::Udp => Color::Rgb(200, 150, 255),
+                Protocol::Tcp => app.theme.tcp_color,
+                Protocol::Udp => app.theme.udp_color,
             };
 
             let row_fg = if is_selected {
-                Color::Rgb(255, 200, 50)
+                app.theme.selected_fg
             } else {
-                Color::Rgb(200, 200, 220)
+                app.theme.text_default
             };
 
             let cmd = p
@@ -566,19 +669,36 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
                 .next()
                 .unwrap_or("-");
 
-            Row::new(vec![
-                Cell::from(format!("{}{}", marker, p.port)).style(Style::default().fg(
-                    if is_selected {
-                        Color::Rgb(255, 200, 50)
-                    } else {
-                        Color::Rgb(255, 150, 80)
-                    },
-                )),
-                Cell::from(p.pid.to_string()).style(Style::default().fg(row_fg)),
-                Cell::from(p.name.clone()).style(Style::default().fg(row_fg).add_modifier(Modifier::BOLD)),
-                Cell::from(p.protocol.to_string()).style(Style::default().fg(proto_color)),
-                Cell::from(cmd.to_string()).style(Style::default().fg(Color::Rgb(120, 120, 150))),
-            ])
+            // Apply animation to zapping processes
+            if is_zapping {
+                let lightning_chars = ["⚡", "✧", "✦"];
+                let animation_frame = (now.elapsed().as_millis() / 100) % 3;
+                let lightning = lightning_chars[animation_frame as usize];
+
+                Row::new(vec![
+                    Cell::from(format!("{}{} {}", marker, p.port, lightning)).style(
+                        Style::default().fg(app.theme.accent_secondary)
+                    ),
+                    Cell::from(p.pid.to_string()).style(Style::default().fg(app.theme.accent_secondary)),
+                    Cell::from(p.name.clone()).style(Style::default().fg(app.theme.accent_secondary).add_modifier(Modifier::BOLD)),
+                    Cell::from(p.protocol.to_string()).style(Style::default().fg(app.theme.accent_secondary)),
+                    Cell::from(cmd.to_string()).style(Style::default().fg(app.theme.accent_secondary)),
+                ])
+            } else {
+                Row::new(vec![
+                    Cell::from(format!("{}{}", marker, p.port)).style(Style::default().fg(
+                        if is_selected {
+                            app.theme.port_selected_fg
+                        } else {
+                            app.theme.port_fg
+                        },
+                    )),
+                    Cell::from(p.pid.to_string()).style(Style::default().fg(row_fg)),
+                    Cell::from(p.name.clone()).style(Style::default().fg(row_fg).add_modifier(Modifier::BOLD)),
+                    Cell::from(p.protocol.to_string()).style(Style::default().fg(proto_color)),
+                    Cell::from(cmd.to_string()).style(Style::default().fg(app.theme.command_color)),
+                ])
+            }
         })
         .collect();
 
@@ -596,12 +716,12 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(Color::Rgb(50, 50, 70)))
-                .style(Style::default().bg(Color::Rgb(18, 18, 30))),
+                .border_style(Style::default().fg(app.theme.border))
+                .style(Style::default().bg(app.theme.background_secondary)),
         )
         .row_highlight_style(
             Style::default()
-                .bg(Color::Rgb(40, 40, 65))
+                .bg(app.theme.highlight_bg)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▸ ");
@@ -612,9 +732,9 @@ fn draw_table(frame: &mut ratatui::Frame, area: Rect, app: &mut App) {
 fn draw_status_bar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let content = if let Some((msg, _, kind)) = &app.status_message {
         let (icon, color) = match kind {
-            StatusKind::Success => ("✓", Color::Rgb(80, 220, 100)),
-            StatusKind::Error => ("✗", Color::Rgb(255, 80, 80)),
-            StatusKind::Info => ("●", Color::Rgb(100, 180, 255)),
+            StatusKind::Success => ("✓", app.theme.success),
+            StatusKind::Error => ("✗", app.theme.error),
+            StatusKind::Info => ("●", app.theme.info),
         };
         Line::from(vec![
             Span::styled(format!(" {} ", icon), Style::default().fg(color)),
@@ -624,11 +744,11 @@ fn draw_status_bar(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         let secs_ago = app.last_refresh.elapsed().as_secs();
         Line::from(vec![Span::styled(
             format!(" Last refreshed {}s ago", secs_ago),
-            Style::default().fg(Color::Rgb(80, 80, 100)),
+            Style::default().fg(app.theme.accent_tertiary),
         )])
     };
 
-    let bar = Paragraph::new(content).style(Style::default().bg(Color::Rgb(20, 20, 35)));
+    let bar = Paragraph::new(content).style(Style::default().bg(app.theme.background_secondary));
     frame.render_widget(bar, area);
 }
 
@@ -647,6 +767,7 @@ fn draw_key_hints(frame: &mut ratatui::Frame, area: Rect, app: &App) {
             ("/", "filter"),
             ("s", "sort"),
             ("r", "refresh"),
+            ("t", "theme"),
             ("?", "help"),
             ("q", "quit"),
         ]
@@ -660,15 +781,15 @@ fn draw_key_hints(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 Span::styled(
                     format!(" {} ", key),
                     Style::default()
-                        .fg(Color::Rgb(255, 150, 80))
+                        .fg(app.theme.highlight_fg)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(*desc, Style::default().fg(Color::Rgb(120, 120, 150))),
+                Span::styled(*desc, Style::default().fg(app.theme.command_color)),
             ];
             if i < hints.len() - 1 {
                 s.push(Span::styled(
                     " │",
-                    Style::default().fg(Color::Rgb(50, 50, 70)),
+                    Style::default().fg(app.theme.border),
                 ));
             }
             s
@@ -676,13 +797,69 @@ fn draw_key_hints(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         .collect();
 
     let bar = Paragraph::new(Line::from(spans))
-        .style(Style::default().bg(Color::Rgb(12, 12, 20)));
+        .style(Style::default().bg(app.theme.background));
     frame.render_widget(bar, area);
 }
 
-fn draw_help_overlay(frame: &mut ratatui::Frame, area: Rect) {
+fn draw_confirm_dialog(frame: &mut ratatui::Frame, area: Rect, app: &App) {
+    let width = 40u16.min(area.width.saturating_sub(4));
+    let height = 9u16.min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let popup_area = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let count_text = if app.confirm_target_count == 1 {
+        "Kill 1 process?".to_string()
+    } else {
+        format!("Kill {} processes?", app.confirm_target_count)
+    };
+
+    let dialog_text = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            &count_text,
+            Style::default()
+                .fg(app.theme.error)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                " Y ",
+                Style::default()
+                    .fg(app.theme.background)
+                    .bg(app.theme.success)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Confirm  "),
+            Span::styled(
+                " N ",
+                Style::default()
+                    .fg(app.theme.background)
+                    .bg(app.theme.error)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" Cancel"),
+        ]),
+        Line::from(""),
+    ];
+
+    let dialog = Paragraph::new(dialog_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(app.theme.error))
+            .style(Style::default().bg(app.theme.background_tertiary)),
+    );
+
+    frame.render_widget(dialog, popup_area);
+}
+
+fn draw_help_overlay(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let width = 50u16.min(area.width.saturating_sub(4));
-    let height = 20u16.min(area.height.saturating_sub(4));
+    let height = 21u16.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(width)) / 2;
     let y = (area.height.saturating_sub(height)) / 2;
     let popup_area = Rect::new(x, y, width, height);
@@ -693,54 +870,58 @@ fn draw_help_overlay(frame: &mut ratatui::Frame, area: Rect) {
         Line::from(Span::styled(
             "PortZap Keyboard Shortcuts",
             Style::default()
-                .fg(Color::Rgb(255, 150, 80))
+                .fg(app.theme.highlight_fg)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  ↑/↓ or j/k  ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  ↑/↓ or j/k  ", Style::default().fg(app.theme.info)),
             Span::raw("Move selection up/down"),
         ]),
         Line::from(vec![
-            Span::styled("  g / G        ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  g / G        ", Style::default().fg(app.theme.info)),
             Span::raw("Jump to top/bottom"),
         ]),
         Line::from(vec![
-            Span::styled("  Space        ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  Space        ", Style::default().fg(app.theme.info)),
             Span::raw("Toggle select process"),
         ]),
         Line::from(vec![
-            Span::styled("  a            ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  a            ", Style::default().fg(app.theme.info)),
             Span::raw("Select/deselect all"),
         ]),
         Line::from(vec![
-            Span::styled("  x / Enter    ", Style::default().fg(Color::Rgb(255, 80, 80))),
+            Span::styled("  x / Enter    ", Style::default().fg(app.theme.error)),
             Span::raw("Zap selected processes"),
         ]),
         Line::from(vec![
-            Span::styled("  /            ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  /            ", Style::default().fg(app.theme.info)),
             Span::raw("Search/filter processes"),
         ]),
         Line::from(vec![
-            Span::styled("  s            ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  s            ", Style::default().fg(app.theme.info)),
             Span::raw("Cycle sort column"),
         ]),
         Line::from(vec![
-            Span::styled("  r            ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  r            ", Style::default().fg(app.theme.info)),
             Span::raw("Refresh process list"),
         ]),
         Line::from(vec![
-            Span::styled("  ?            ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  t            ", Style::default().fg(app.theme.info)),
+            Span::raw("Toggle theme"),
+        ]),
+        Line::from(vec![
+            Span::styled("  ?            ", Style::default().fg(app.theme.info)),
             Span::raw("Toggle this help"),
         ]),
         Line::from(vec![
-            Span::styled("  q / Esc      ", Style::default().fg(Color::Rgb(100, 200, 255))),
+            Span::styled("  q / Esc      ", Style::default().fg(app.theme.info)),
             Span::raw("Quit"),
         ]),
         Line::from(""),
         Line::from(Span::styled(
             "  Press any key to close",
-            Style::default().fg(Color::Rgb(80, 80, 100)),
+            Style::default().fg(app.theme.accent_tertiary),
         )),
     ];
 
@@ -750,8 +931,8 @@ fn draw_help_overlay(frame: &mut ratatui::Frame, area: Rect) {
             .title_alignment(Alignment::Center)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(255, 150, 80)))
-            .style(Style::default().bg(Color::Rgb(25, 25, 45))),
+            .border_style(Style::default().fg(app.theme.highlight_fg))
+            .style(Style::default().bg(app.theme.background_tertiary)),
     );
 
     frame.render_widget(help, popup_area);

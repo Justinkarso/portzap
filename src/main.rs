@@ -1,5 +1,6 @@
 mod cli;
 mod commands;
+mod config;
 mod errors;
 mod interactive;
 mod killer;
@@ -7,6 +8,7 @@ mod output;
 mod platform;
 mod process;
 mod scanner;
+mod theme;
 mod tui;
 
 use anyhow::{Context, Result};
