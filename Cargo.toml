@@ -1,6 +1,6 @@
 [package]
 name = "portzap"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.74"
 description = "A fast, cross-platform port management tool. Kill, list, and watch processes on network ports."
@@ -24,6 +24,8 @@ serde_json = "1.0"
 owo-colors = { version = "4", features = ["supports-colors"] }
 dialoguer = "0.11"
 signal-hook = "0.3"
+ratatui = "0.29"
+crossterm = "0.28"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["signal", "process"] }

@@ -17,7 +17,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
   portzap --dry-run 3000    Show what would be killed
   portzap list              List all listening ports
   portzap list 3000         Show what's on port 3000
-  portzap watch 3000        Watch and auto-kill anything on port 3000"
+  portzap watch 3000        Watch and auto-kill anything on port 3000
+  portzap gui               Open interactive TUI dashboard"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -63,6 +64,9 @@ pub enum Commands {
 
     /// Watch ports and auto-kill anything that binds to them
     Watch(WatchArgs),
+
+    /// Open interactive TUI to browse and kill processes on ports
+    Gui,
 }
 
 #[derive(Args, Debug)]

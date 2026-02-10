@@ -1,5 +1,7 @@
 # portzap
 
+![portzap hero](./hero.png)
+
 A fast, cross-platform port management tool. Kill, list, and watch processes on network ports.
 
 ## Features

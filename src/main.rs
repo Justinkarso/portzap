@@ -7,6 +7,7 @@ mod output;
 mod platform;
 mod process;
 mod scanner;
+mod tui;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -42,6 +43,10 @@ fn main() -> Result<()> {
                 ports,
                 format: convert_format(args.format),
             })?;
+        }
+
+        Some(Commands::Gui) => {
+            tui::run()?;
         }
 
         Some(Commands::Watch(args)) => {
