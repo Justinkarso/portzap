@@ -91,6 +91,7 @@ jobs:
 
       - name: Publish root package
         run: |
+          cp README.md npm/portzap/README.md
           cd npm/portzap
           npm publish --access public
         env:
