@@ -1,10 +1,10 @@
 [package]
 name = "portzap"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.74"
 description = "A fast, cross-platform port management tool. Kill, list, and watch processes on network ports."
-license = "MIT OR Apache-2.0"
+license = "MIT"
 homepage = "https://github.com/justinkarso/portzap"
 repository = "https://github.com/justinkarso/portzap"
 keywords = ["port", "kill", "process", "network", "cli"]
@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "string"] }
+clap_complete = "4.5"
 thiserror = "2"
 anyhow = "1.0"
 comfy-table = "7"

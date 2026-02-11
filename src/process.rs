@@ -59,6 +59,14 @@ impl fmt::Display for KillSignal {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitCondition {
+    /// Wait until the port is free (no processes listening)
+    Free,
+    /// Wait until the port is occupied (a process is listening)
+    Occupied,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct KillResult {
     pub process: ProcessInfo,

@@ -13,9 +13,9 @@ mod tui;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, Commands, Format, Signal};
+use cli::{Cli, Commands, Format, Signal, WaitUntil};
 use output::OutputFormat;
-use process::{KillSignal, PortSpec};
+use process::{KillSignal, PortSpec, WaitCondition};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -45,6 +45,34 @@ fn main() -> Result<()> {
                 ports,
                 format: convert_format(args.format),
             })?;
+        }
+
+        Some(Commands::Free(args)) => {
+            let result = commands::free::execute(commands::free::FreeOptions {
+                start: args.port,
+                max: args.max,
+                format: convert_format(args.format),
+            })?;
+            if result.is_none() {
+                std::process::exit(1);
+            }
+        }
+
+        Some(Commands::Wait(args)) => {
+            let success = commands::wait::execute(commands::wait::WaitOptions {
+                port: args.port,
+                condition: convert_wait_until(args.until),
+                timeout_secs: args.timeout,
+                poll_interval_ms: args.poll,
+                format: convert_format(args.format),
+            })?;
+            if !success {
+                std::process::exit(1);
+            }
+        }
+
+        Some(Commands::Completions(args)) => {
+            commands::completions::execute(args.shell);
         }
 
         Some(Commands::Gui) => {
@@ -109,5 +137,12 @@ fn convert_format(f: Format) -> OutputFormat {
         Format::Table => OutputFormat::Table,
         Format::Json => OutputFormat::Json,
         Format::Plain => OutputFormat::Plain,
+    }
+}
+
+fn convert_wait_until(w: WaitUntil) -> WaitCondition {
+    match w {
+        WaitUntil::Down => WaitCondition::Free,
+        WaitUntil::Up => WaitCondition::Occupied,
     }
 }

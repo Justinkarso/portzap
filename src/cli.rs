@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 
 /// A fast, cross-platform port management tool.
 /// Kill, list, and watch processes on network ports.
@@ -18,6 +19,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
   portzap list              List all listening ports
   portzap list 3000         Show what's on port 3000
   portzap watch 3000        Watch and auto-kill anything on port 3000
+  portzap free 3000          Find the next available port starting from 3000
+  portzap wait 3000           Wait until port 3000 becomes free
+  portzap completions bash    Generate shell completions for bash
   portzap gui               Open interactive TUI dashboard"
 )]
 pub struct Cli {
@@ -64,6 +68,15 @@ pub enum Commands {
 
     /// Watch ports and auto-kill anything that binds to them
     Watch(WatchArgs),
+
+    /// Find the next available (free) port starting from a given port
+    Free(FreeArgs),
+
+    /// Wait until a port becomes free or occupied
+    Wait(WaitArgs),
+
+    /// Generate shell completions
+    Completions(CompletionsArgs),
 
     /// Open interactive TUI to browse and kill processes on ports
     Gui,
@@ -151,4 +164,57 @@ pub enum Format {
     Table,
     Json,
     Plain,
+}
+
+#[derive(Args, Debug)]
+pub struct FreeArgs {
+    /// Starting port to search from
+    #[arg(value_name = "PORT")]
+    pub port: u16,
+
+    /// Upper bound for search (inclusive)
+    #[arg(long, default_value_t = 65535)]
+    pub max: u16,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t = Format::Table)]
+    pub format: Format,
+}
+
+#[derive(Args, Debug)]
+pub struct WaitArgs {
+    /// Port to wait on
+    #[arg(value_name = "PORT")]
+    pub port: u16,
+
+    /// Wait until the port reaches this state
+    #[arg(long, value_enum, default_value_t = WaitUntil::Down)]
+    pub until: WaitUntil,
+
+    /// Timeout in seconds (0 = infinite)
+    #[arg(long, default_value_t = 30)]
+    pub timeout: u64,
+
+    /// Poll interval in milliseconds
+    #[arg(long, default_value_t = 250)]
+    pub poll: u64,
+
+    /// Output format
+    #[arg(long, value_enum, default_value_t = Format::Table)]
+    pub format: Format,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitUntil {
+    /// Wait until port is free (no process listening)
+    Down,
+    /// Wait until port is occupied (a process is listening)
+    Up,
+}
+
+#[derive(Args, Debug)]
+pub struct CompletionsArgs {
+    /// Shell to generate completions for
+    #[arg(value_name = "SHELL")]
+    pub shell: Shell,
 }

@@ -9,6 +9,9 @@ A fast, cross-platform port management tool. Kill, list, and watch processes on 
 - **Kill processes**: Terminate processes running on specified ports
 - **List ports**: View all listening ports or inspect specific ones
 - **Watch ports**: Automatically kill any process that binds to watched ports
+- **Find free ports**: Find the next available port starting from a given number
+- **Wait for ports**: Block until a port becomes free or occupied
+- **Shell completions**: Generate completions for bash, zsh, fish, powershell, and elvish
 - **Interactive mode**: Select which processes to kill interactively
 - **Cross-platform**: Works on macOS, Linux, and Windows
 - **Graceful shutdown**: Sends SIGTERM first, escalates to SIGKILL if needed
@@ -76,6 +79,49 @@ portzap watch 3000
 portzap watch 3000 8080
 ```
 
+### Find free ports
+
+```bash
+# Find the next free port starting from 3000
+portzap free 3000
+
+# Find free port with an upper bound
+portzap free 3000 --max 4000
+
+# JSON output (useful for scripts and agents)
+portzap free 3000 --format json
+```
+
+### Wait for port state changes
+
+```bash
+# Wait until port 3000 becomes free (default)
+portzap wait 3000
+
+# Wait until port 3000 becomes occupied
+portzap wait 3000 --until up
+
+# Custom timeout (0 = infinite)
+portzap wait 3000 --timeout 10
+
+# Custom poll interval
+portzap wait 3000 --poll 500
+```
+
+### Shell completions
+
+```bash
+# Generate completions for your shell
+portzap completions bash
+portzap completions zsh
+portzap completions fish
+portzap completions powershell
+portzap completions elvish
+
+# Example: add to your .bashrc
+eval "$(portzap completions bash)"
+```
+
 ### Interactive GUI Mode
 
 Launch an interactive terminal UI to browse and manage processes:
@@ -125,6 +171,62 @@ portzap watch 8080 --poll 2000
 portzap -i 5000
 ```
 
+## Using with AI Agents
+
+AI coding agents (Claude Code, Cursor, Copilot, etc.) frequently need to check and kill processes on ports. Instead of parsing platform-specific `lsof` output, agents can use portzap's `--format json` for reliable, structured results.
+
+### Agent-friendly commands
+
+```bash
+# Check what's on port 3000 (structured JSON output)
+portzap list 3000 --format json
+
+# List all listening ports
+portzap list --format json
+
+# Kill a process on port 3000 (with JSON result)
+portzap 3000 --format json
+
+# Preview what would be killed without killing
+portzap --dry-run 3000 --format json
+
+# Find the next free port starting from 3000
+portzap free 3000 --format json
+
+# Wait until a port is free before starting a server
+portzap wait 3000 --timeout 10 --format json
+```
+
+### Example JSON output
+
+```bash
+$ portzap list 3000 --format json
+```
+```json
+[
+  {
+    "pid": 12345,
+    "name": "node",
+    "port": 3000,
+    "protocol": "tcp",
+    "command": "node server.js"
+  }
+]
+```
+
+### Add to your project
+
+Drop this into your project's `CLAUDE.md`, `.cursorrules`, or equivalent agent instructions file:
+
+```
+When you need to check or kill processes on ports, use `portzap` instead of lsof/netstat:
+- Check a port: portzap list <port> --format json
+- Kill a port: portzap <port> --format json
+- List all ports: portzap list --format json
+- Find free port: portzap free <port> --format json
+- Wait for port: portzap wait <port> --timeout 10 --format json
+```
+
 ## License
 
-MIT OR Apache-2.0
+MIT
